@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxnut-dotenv
+data:
+  # Proxmox API Configuration
+  PROXMOX_HOST: "your-proxmox-server.example.com"
+  PROXMOX_PORT: "443"
+  PROXMOX_VERIFY_TLS: "true"
+  PROXMOX_USER: "system@pam"
+  PROXMOX_TOKEN_NAME: "your-token-name"
+  PROXMOX_TOKEN: "your-token-value-here"
+  # NUT Server Configuration
+  NUT_HOST: "127.0.0.1"
+  NUT_PORT: "3493"
+  NUT_UPS_NAME: "your-ups-name"
+  # UPS Configuration
+  UPS_NORMAL_STATUSES: "OL,OL CHRG"
+  # Target machines to shutdown (comma-separated)
+  PROXNUT_SHUTDOWN_HOSTS: "machine1,machine2"
+  # Monitoring Configuration (seconds)
+  CHECK_INTERVAL: "5"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxnut
+  labels:
+    app: proxnut
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: proxnut
+  template:
+    metadata:
+      labels:
+        app: proxnut
+    spec:
+      hostNetwork: true # For static IP access to NUT server
+      nodeSelector:
+        proxnut-node: "true" # Ensure this pod runs on a specific node
+      containers:
+        - name: proxnut
+          image: ghcr.io/jlandowner/proxnut:latest
+          envFrom:
+            - configMapRef:
+                name: proxnut-dotenv
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
