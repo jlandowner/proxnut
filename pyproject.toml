@@ -1,0 +1,18 @@
+[project]
+name = "proxnut"
+version = "0.1.0"
+description = "Contorol Proxmox when power-loss, powered by Network UPS Tool(nut)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "proxmoxer>=2.2.0",
+    "pynutclient>=2.8.4",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.5",
+]
+[dependency-groups]
+dev = [
+    "poethepoet>=0.37.0",
+]
+[tool.poe.tasks]
+build = "podman build . -t proxnut"
