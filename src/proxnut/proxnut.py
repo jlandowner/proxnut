@@ -24,29 +24,19 @@ timer = None
 shutdown_requested = False
 
 
-def shutdown_proxmox_nodes():
-    prox = ProxmoxAPI(
-        host=os.getenv("PROXMOX_HOST", "localhost"),
-        port=int(os.getenv("PROXMOX_PORT", "8006")),
-        verify_ssl=os.getenv("PROXMOX_VERIFY_TLS", "").lower()
-        in [
-            "true",
-            "1",
-        ],
-        user=os.getenv("PROXMOX_USER", "example@pam"),
-        token_name=os.getenv("PROXMOX_TOKEN_NAME", "proxnut"),
-        token_value=os.getenv("PROXMOX_TOKEN", "******"),
-        timeout=int(os.getenv("PROXMOX_TIMEOUT", "30")),
-    )
-
+def shutdown_proxmox_nodes(prox: ProxmoxAPI):
     nodes = prox.nodes.get()
     if nodes is None:
         raise Exception("Failed to retrieve nodes from Proxmox API.")
 
     for node in nodes:
-        if node["node"] in TARGET_MACHINES:
-            logger.info("Shutting down node: %s", node["node"])
-            prox.nodes(node["node"]).status.post(command="shutdown")
+        try:
+            if node["node"] in TARGET_MACHINES:
+                logger.info("Shutting down node: %s", node["node"])
+                prox.nodes(node["node"]).status.post(command="shutdown")
+        except Exception as e:
+            logger.error("Error shutting down node %s: %s", node["node"], e)
+            continue
     else:
         logger.info("All nodes have been processed.")
 
@@ -81,13 +71,40 @@ def main():
         port=int(os.getenv("NUT_PORT", "3493")),
     )
     ups_names = nut_client.GetUPSNames()
+    logger.info("Available UPS names: %s", ups_names)
 
     ups_name = os.getenv("NUT_UPS_NAME", "")
     if ups_name not in ups_names:
         raise Exception("UPS not found: {} in {}".format(ups_name, ups_names))
 
+    prox = ProxmoxAPI(
+        host=os.getenv("PROXMOX_HOST", "localhost"),
+        port=int(os.getenv("PROXMOX_PORT", "8006")),
+        verify_ssl=os.getenv("PROXMOX_VERIFY_TLS", "").lower()
+        in [
+            "true",
+            "1",
+        ],
+        user=os.getenv("PROXMOX_USER", "example@pam"),
+        token_name=os.getenv("PROXMOX_TOKEN_NAME", "proxnut"),
+        token_value=os.getenv("PROXMOX_TOKEN", "******"),
+        timeout=int(os.getenv("PROXMOX_TIMEOUT", "30")),
+    )
+    res = prox.nodes.get() or []
+    nodes = [node["node"] for node in res] if (nodes := prox.nodes.get()) else []
+    logger.info("Proxmox nodes: %s", nodes)
+
+    if not set(TARGET_MACHINES).issubset(set(nodes)):
+        raise Exception(
+            "Some target machines not found in Proxmox nodes. Targets: {}, Nodes: {}".format(
+                TARGET_MACHINES, nodes
+            )
+        )
+
     def check_ups_status():
         global timer
+
+        prox.nodes.get()  # Simple call to check connection
 
         ups_vars = nut_client.GetUPSVars(ups_name)
 
@@ -98,7 +115,7 @@ def main():
             logger.warning(
                 "UPS status indicates power issue (%s). Initiating shutdown.", status
             )
-            shutdown_proxmox_nodes()
+            shutdown_proxmox_nodes(prox)
             return
         else:
             logger.info("UPS status is normal (%s). No action required.", status)
