@@ -91,6 +91,7 @@ docker run -d --name proxnut --env-file .env ghcr.io/jlandowner/proxnut:latest
 | `UPS_NORMAL_STATUSES`    | Normal UPS statuses (comma-separated) | `OL,OL CHRG`  |
 | `PROXNUT_SHUTDOWN_HOSTS` | Target hosts to shutdown              | Required      |
 | `CHECK_INTERVAL`         | Status check interval in seconds      | `5`           |
+| `PROXNUT_SHUTDOWN_DELAY` | Shutdown delay in seconds (optional)  | `0` (immediate) |
 
 ## License
 

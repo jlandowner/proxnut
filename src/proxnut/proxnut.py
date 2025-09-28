@@ -18,10 +18,13 @@ logger = logging.getLogger(__name__)
 
 TARGET_MACHINES = os.getenv("PROXNUT_SHUTDOWN_HOSTS", "").split(",")
 UPS_NORMAL_STATUSES = os.getenv("UPS_NORMAL_STATUSES", "OL,OL CHRG").split(",")
+SHUTDOWN_DELAY = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
 
 # Global timer reference for cancellation
 timer = None
+shutdown_timer = None
 shutdown_requested = False
+shutdown_in_progress = False
 
 
 def shutdown_proxmox_nodes(prox: ProxmoxAPI):
@@ -44,14 +47,17 @@ def shutdown_proxmox_nodes(prox: ProxmoxAPI):
 UPS_STATUS = "ups.status"
 
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _frame):
     """Handle graceful shutdown on SIGINT and SIGTERM"""
-    global timer, shutdown_requested
+    global timer, shutdown_timer, shutdown_requested
     logger.info("Received signal %s. Gracefully shutting down...", signum)
     shutdown_requested = True
     if timer is not None:
         timer.cancel()
         logger.info("Cancelled running timer.")
+    if shutdown_timer is not None:
+        shutdown_timer.cancel()
+        logger.info("Cancelled shutdown timer.")
 
 
 # Properly decode bytes to strings
@@ -61,10 +67,55 @@ def decode_if_bytes(obj):
     return str(obj)
 
 
+def execute_shutdown(prox, ups_name, nut_client):
+    """Execute the actual shutdown after delay"""
+    global shutdown_in_progress
+
+    # Final check before shutdown - verify UPS is still in bad state
+    try:
+        ups_vars = nut_client.GetUPSVars(ups_name)
+        ups_vars = {decode_if_bytes(k): decode_if_bytes(v) for k, v in ups_vars.items()}
+        status = ups_vars.get(UPS_STATUS, "")
+
+        if status in UPS_NORMAL_STATUSES:
+            logger.info("UPS recovered to normal status (%s) before shutdown. Cancelling shutdown.", status)
+            shutdown_in_progress = False
+            return
+
+        logger.warning("UPS still in abnormal state (%s). Proceeding with shutdown.", status)
+        shutdown_proxmox_nodes(prox)
+
+    except Exception as e:
+        logger.error("Error checking UPS status before shutdown: %s", e)
+        logger.warning("Proceeding with shutdown due to previous power issue.")
+        shutdown_proxmox_nodes(prox)
+
+    shutdown_in_progress = False
+
+
+def schedule_delayed_shutdown(prox, ups_name, nut_client):
+    """Schedule shutdown with delay and recovery checking"""
+    global shutdown_timer, shutdown_in_progress
+
+    if SHUTDOWN_DELAY > 0:
+        shutdown_in_progress = True
+        logger.warning("Scheduling shutdown in %d seconds. Monitoring for UPS recovery...", SHUTDOWN_DELAY)
+        shutdown_timer = threading.Timer(SHUTDOWN_DELAY, execute_shutdown, args=[prox, ups_name, nut_client])
+        shutdown_timer.start()
+    else:
+        logger.warning("No shutdown delay configured. Executing immediate shutdown.")
+        shutdown_proxmox_nodes(prox)
+
+
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     logger.info("Signal handlers registered for SIGINT and SIGTERM.")
+
+    if SHUTDOWN_DELAY > 0:
+        logger.info("Shutdown delay configured: %d seconds", SHUTDOWN_DELAY)
+    else:
+        logger.info("No shutdown delay configured - immediate shutdown on power loss")
 
     nut_client = PyNUT.PyNUTClient(
         host=os.getenv("NUT_HOST", "localhost"),
@@ -102,7 +153,7 @@ def main():
         )
 
     def check_ups_status():
-        global timer
+        global timer, shutdown_timer, shutdown_in_progress
 
         prox.nodes.get()  # Simple call to check connection
 
@@ -111,14 +162,28 @@ def main():
         ups_vars = {decode_if_bytes(k): decode_if_bytes(v) for k, v in ups_vars.items()}
 
         status = ups_vars.get(UPS_STATUS, "")
+
         if status not in UPS_NORMAL_STATUSES:
-            logger.warning(
-                "UPS status indicates power issue (%s). Initiating shutdown.", status
-            )
-            shutdown_proxmox_nodes(prox)
-            return
+            # UPS has power issue
+            if not shutdown_in_progress:
+                logger.warning(
+                    "UPS status indicates power issue (%s). Initiating shutdown process.", status
+                )
+                schedule_delayed_shutdown(prox, ups_name, nut_client)
+                return
+            else:
+                logger.info("UPS status still abnormal (%s). Shutdown already in progress.", status)
         else:
-            logger.info("UPS status is normal (%s). No action required.", status)
+            # UPS status is normal
+            if shutdown_in_progress:
+                # Cancel pending shutdown - UPS recovered!
+                logger.info("UPS recovered to normal status (%s). Cancelling pending shutdown.", status)
+                if shutdown_timer is not None:
+                    shutdown_timer.cancel()
+                    shutdown_timer = None
+                shutdown_in_progress = False
+            else:
+                logger.info("UPS status is normal (%s). No action required.", status)
 
         # Schedule next check
         if shutdown_requested:
