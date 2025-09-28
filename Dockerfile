@@ -12,4 +12,4 @@ WORKDIR /app
 RUN uv sync --locked
 
 # Run the application with uv
-CMD ["uv", "run", "main.py"]
+CMD ["uv", "run", "proxnut"]

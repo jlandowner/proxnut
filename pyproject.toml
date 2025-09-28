@@ -1,7 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "proxnut"
-version = "0.1.0"
-description = "Contorol Proxmox when power-loss, powered by Network UPS Tool(nut)"
+dynamic = ["version"]
+description = "Control Proxmox when power-loss, powered by Network UPS Tool(nut)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,9 +14,17 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.32.5",
 ]
+
+[project.scripts]
+proxnut = "proxnut:main"
+
 [dependency-groups]
 dev = [
     "poethepoet>=0.37.0",
 ]
+
+[tool.hatch.version]
+path = "src/proxnut/__init__.py"
+
 [tool.poe.tasks]
 build = "podman build . -t proxnut"
