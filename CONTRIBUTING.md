@@ -37,7 +37,7 @@ uv run proxnut
 
 ```bash
 # Build Docker image
-docker build -t proxnut:local .
+uv run poe build
 
 # Test the Docker build
 docker run --env-file .env proxnut:local

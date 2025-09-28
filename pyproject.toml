@@ -27,4 +27,4 @@ dev = [
 path = "src/proxnut/__init__.py"
 
 [tool.poe.tasks]
-build = "podman build . -t proxnut"
+build = "docker build -t proxnut:local ."

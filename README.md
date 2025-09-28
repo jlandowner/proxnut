@@ -13,7 +13,6 @@ by monitoring UPS status through Network UPS Tools (NUT).
 - 🖥️ **Proxmox Integration**: Graceful shutdown of specified Proxmox nodes
 - ⚙️ **Configurable**: Customizable shutdown delays and target hosts
 - 🐳 **Docker Ready**: Available as a Docker container
-- ☸️ **Kubernetes Compatible**: Includes Kubernetes deployment manifests
 
 ## How It Works
 
@@ -72,16 +71,6 @@ cp .env.example .env
 
 # Run container
 docker run -d --name proxnut --env-file .env ghcr.io/jlandowner/proxnut:latest
-```
-
-### Using Kubernetes
-
-```bash
-# Prepare .env config map
-# Edit deploy/k8s.yaml with your configuration
-
-# Apply the manifests
-kubectl apply -f deploy/k8s.yaml
 ```
 
 ## Configuration
