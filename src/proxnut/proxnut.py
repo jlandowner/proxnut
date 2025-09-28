@@ -2,6 +2,9 @@ import threading
 import signal
 import logging
 import os
+import json
+import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from PyNUTClient import PyNUT
 from proxmoxer import ProxmoxAPI
@@ -19,6 +22,7 @@ logger = logging.getLogger(__name__)
 TARGET_MACHINES = os.getenv("PROXNUT_SHUTDOWN_HOSTS", "").split(",")
 UPS_NORMAL_STATUSES = os.getenv("UPS_NORMAL_STATUSES", "OL,OL CHRG").split(",")
 SHUTDOWN_DELAY = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # Global timer reference for cancellation
 timer = None
@@ -67,6 +71,47 @@ def decode_if_bytes(obj):
     return str(obj)
 
 
+def send_discord_notification(title, description, color=0xFF0000, thumbnail_url=None):
+    """Send notification to Discord via webhook"""
+    if not DISCORD_WEBHOOK_URL:
+        logger.debug("Discord webhook URL not configured, skipping notification")
+        return
+
+    try:
+        embed = {
+            "title": title,
+            "description": description,
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {
+                "text": "proxnut UPS Monitor"
+            }
+        }
+
+        if thumbnail_url:
+            embed["thumbnail"] = {"url": thumbnail_url}
+
+        payload = {
+            "embeds": [embed]
+        }
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+
+        if response.status_code == 204:
+            logger.info("Discord notification sent successfully")
+        else:
+            logger.warning("Discord notification failed with status %d: %s",
+                         response.status_code, response.text)
+
+    except Exception as e:
+        logger.error("Failed to send Discord notification: %s", e)
+
+
 def execute_shutdown(prox, ups_name, nut_client):
     """Execute the actual shutdown after delay"""
     global shutdown_in_progress
@@ -93,16 +138,30 @@ def execute_shutdown(prox, ups_name, nut_client):
     shutdown_in_progress = False
 
 
-def schedule_delayed_shutdown(prox, ups_name, nut_client):
+def schedule_delayed_shutdown(prox, ups_name, nut_client, ups_status):
     """Schedule shutdown with delay and recovery checking"""
     global shutdown_timer, shutdown_in_progress
 
+    # Send Discord notification about power loss
+    target_hosts = ", ".join(TARGET_MACHINES)
     if SHUTDOWN_DELAY > 0:
         shutdown_in_progress = True
+        description = f"⚠️ **UPS Status:** {ups_status}\n🖥️ **Target Hosts:** {target_hosts}\n⏱️ **Shutdown Delay:** {SHUTDOWN_DELAY} seconds\n📊 **Monitoring for recovery...**"
+        send_discord_notification(
+            "🔴 UPS Power Loss Detected!",
+            description,
+            color=0xFF4500  # Orange-red
+        )
         logger.warning("Scheduling shutdown in %d seconds. Monitoring for UPS recovery...", SHUTDOWN_DELAY)
         shutdown_timer = threading.Timer(SHUTDOWN_DELAY, execute_shutdown, args=[prox, ups_name, nut_client])
         shutdown_timer.start()
     else:
+        description = f"⚠️ **UPS Status:** {ups_status}\n🖥️ **Target Hosts:** {target_hosts}\n⚡ **Action:** Immediate shutdown"
+        send_discord_notification(
+            "🔴 UPS Power Loss - Immediate Shutdown!",
+            description,
+            color=0xFF0000  # Red
+        )
         logger.warning("No shutdown delay configured. Executing immediate shutdown.")
         shutdown_proxmox_nodes(prox)
 
@@ -169,7 +228,7 @@ def main():
                 logger.warning(
                     "UPS status indicates power issue (%s). Initiating shutdown process.", status
                 )
-                schedule_delayed_shutdown(prox, ups_name, nut_client)
+                schedule_delayed_shutdown(prox, ups_name, nut_client, status)
                 return
             else:
                 logger.info("UPS status still abnormal (%s). Shutdown already in progress.", status)
@@ -178,6 +237,16 @@ def main():
             if shutdown_in_progress:
                 # Cancel pending shutdown - UPS recovered!
                 logger.info("UPS recovered to normal status (%s). Cancelling pending shutdown.", status)
+
+                # Send Discord notification about recovery
+                target_hosts = ", ".join(TARGET_MACHINES)
+                description = f"✅ **UPS Status:** {status}\n🖥️ **Target Hosts:** {target_hosts}\n🛑 **Shutdown Cancelled**"
+                send_discord_notification(
+                    "🟢 UPS Power Recovered!",
+                    description,
+                    color=0x00FF00  # Green
+                )
+
                 if shutdown_timer is not None:
                     shutdown_timer.cancel()
                     shutdown_timer = None

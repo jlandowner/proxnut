@@ -13,6 +13,7 @@ by monitoring UPS status through Network UPS Tools (NUT).
 - 🖥️ **Proxmox Integration**: Graceful shutdown of specified Proxmox nodes
 - ⚙️ **Configurable**: Customizable shutdown delays and target hosts
 - 🐳 **Docker Ready**: Available as a Docker container
+- 🔔 **Discord Notifications**: Real-time alerts for power events
 
 ## How It Works
 
@@ -44,6 +45,26 @@ Ensure your NUT server is configured and accessible:
 # Test NUT connection
 upsc your-ups-name@nut-server-ip
 ```
+
+### Discord Setup (Optional)
+
+To receive notifications via Discord:
+
+1. **Create Webhook**:
+   - Go to your Discord server settings
+   - Navigate to Integrations → Webhooks
+   - Click "New Webhook"
+   - Copy the webhook URL
+
+2. **Configure Environment**:
+   ```env
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-url
+   ```
+
+3. **Notification Types**:
+   - 🔴 **Power Loss**: Sent when UPS status becomes abnormal
+   - 🟢 **Power Recovered**: Sent when UPS recovers during shutdown delay
+   - ⚫ **Shutdown Executed**: Included in power loss notification
 
 ## Installation
 
@@ -92,6 +113,7 @@ docker run -d --name proxnut --env-file .env ghcr.io/jlandowner/proxnut:latest
 | `PROXNUT_SHUTDOWN_HOSTS` | Target hosts to shutdown              | Required      |
 | `CHECK_INTERVAL`         | Status check interval in seconds      | `5`           |
 | `PROXNUT_SHUTDOWN_DELAY` | Shutdown delay in seconds (optional)  | `0` (immediate) |
+| `DISCORD_WEBHOOK_URL`    | Discord webhook URL for notifications | Optional      |
 
 ## License
 
