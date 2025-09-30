@@ -1,13 +1,17 @@
+"""Main proxnut application logic"""
+
+import sys
 import threading
 import signal
 import logging
 import os
-import json
-import requests
-from datetime import datetime
+import traceback
+from typing import Optional
 from dotenv import load_dotenv
-from PyNUTClient import PyNUT
-from proxmoxer import ProxmoxAPI
+
+from .proxmox_client import ProxmoxClient
+from .ups_client import UPSClient, UPSStatusNotNormalError
+from .notifier import Notifier
 
 # Load environment variables from .env file
 load_dotenv()
@@ -19,252 +23,222 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TARGET_MACHINES = os.getenv("PROXNUT_SHUTDOWN_HOSTS", "").split(",")
-UPS_NORMAL_STATUSES = os.getenv("UPS_NORMAL_STATUSES", "OL,OL CHRG").split(",")
-SHUTDOWN_DELAY = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
-# Global timer reference for cancellation
-timer = None
-shutdown_timer = None
-shutdown_requested = False
-shutdown_in_progress = False
+class ValidateError(Exception):
+    """Custom exception for validation errors"""
+
+    pass
 
 
-def shutdown_proxmox_nodes(prox: ProxmoxAPI):
-    nodes = prox.nodes.get()
-    if nodes is None:
-        raise Exception("Failed to retrieve nodes from Proxmox API.")
+class ProxnutMonitor:
+    """Main monitoring class that orchestrates UPS monitoring and Proxmox shutdown"""
 
-    for node in nodes:
+    def __init__(self):
+        """Initialize the monitor with all required clients"""
+        self.init_clients()
+
+        # Load configuration from environment
+        self.target_machines = [
+            machine.strip()
+            for machine in os.getenv("PROXNUT_SHUTDOWN_HOSTS", "").split(",")
+            if machine.strip()
+        ]
+        self.shutdown_delay = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
+        self.default_check_interval = int(os.getenv("CHECK_INTERVAL", "5"))
+        self.check_interval = self.default_check_interval
+        self.max_check_error_limits = int(os.getenv("MAX_CHECK_ERROR_LIMITS", "5"))
+
+        # Instance state
+        self.monitoring_timer = None
+        self.shutdown_timer = None
+        self.error_count = 0
+
+    def init_clients(self):
+        self.proxmox_client = ProxmoxClient()
+        self.ups_client = UPSClient()
+        self.notifier = Notifier()
+
+    def validate(self):
+        """Validate all configuration and connections"""
+        # Validate UPS configuration
+        logger.info("Validating UPS configuration...")
+        if not self.ups_client.ups_name:
+            raise ValidateError("UPS name not configured (NUT_UPS_NAME)")
+
+        if not self.ups_client.validate_ups_name():
+            available_names = self.ups_client.get_ups_names()
+            raise ValidateError("UPS name not found", available_names)
+
+        # Validate Proxmox configuration
+        logger.info("Validating Proxmox configuration...")
+        if not self.target_machines:
+            raise ValidateError("No target machines configured")
+
+        if not self.proxmox_client.validate_target_nodes(self.target_machines):
+            available_nodes = self.proxmox_client.get_nodes()
+            raise ValidateError(
+                "Target nodes not found in Proxmox cluster", available_nodes
+            )
+
+    def __execute_shutdown(self) -> None:
+        """Execute the actual shutdown after delay"""
+
+        # Recover UPS status before shutdown
         try:
-            if node["node"] in TARGET_MACHINES:
-                logger.info("Shutting down node: %s", node["node"])
-                prox.nodes(node["node"]).status.post(command="shutdown")
-        except Exception as e:
-            logger.error("Error shutting down node %s: %s", node["node"], e)
-            continue
-    else:
-        logger.info("All nodes have been processed.")
+            self.ups_client.check_ups_status_normal()
 
-
-UPS_STATUS = "ups.status"
-
-
-def signal_handler(signum, _frame):
-    """Handle graceful shutdown on SIGINT and SIGTERM"""
-    global timer, shutdown_timer, shutdown_requested
-    logger.info("Received signal %s. Gracefully shutting down...", signum)
-    shutdown_requested = True
-    if timer is not None:
-        timer.cancel()
-        logger.info("Cancelled running timer.")
-    if shutdown_timer is not None:
-        shutdown_timer.cancel()
-        logger.info("Cancelled shutdown timer.")
-
-
-# Properly decode bytes to strings
-def decode_if_bytes(obj):
-    if isinstance(obj, bytes):
-        return obj.decode("utf-8")
-    return str(obj)
-
-
-def send_discord_notification(title, description, color=0xFF0000, thumbnail_url=None):
-    """Send notification to Discord via webhook"""
-    if not DISCORD_WEBHOOK_URL:
-        logger.debug("Discord webhook URL not configured, skipping notification")
-        return
-
-    try:
-        embed = {
-            "title": title,
-            "description": description,
-            "color": color,
-            "timestamp": datetime.utcnow().isoformat(),
-            "footer": {
-                "text": "proxnut UPS Monitor"
-            }
-        }
-
-        if thumbnail_url:
-            embed["thumbnail"] = {"url": thumbnail_url}
-
-        payload = {
-            "embeds": [embed]
-        }
-
-        response = requests.post(
-            DISCORD_WEBHOOK_URL,
-            data=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-
-        if response.status_code == 204:
-            logger.info("Discord notification sent successfully")
-        else:
-            logger.warning("Discord notification failed with status %d: %s",
-                         response.status_code, response.text)
-
-    except Exception as e:
-        logger.error("Failed to send Discord notification: %s", e)
-
-
-def execute_shutdown(prox, ups_name, nut_client):
-    """Execute the actual shutdown after delay"""
-    global shutdown_in_progress
-
-    # Final check before shutdown - verify UPS is still in bad state
-    try:
-        ups_vars = nut_client.GetUPSVars(ups_name)
-        ups_vars = {decode_if_bytes(k): decode_if_bytes(v) for k, v in ups_vars.items()}
-        status = ups_vars.get(UPS_STATUS, "")
-
-        if status in UPS_NORMAL_STATUSES:
-            logger.info("UPS recovered to normal status (%s) before shutdown. Cancelling shutdown.", status)
-            shutdown_in_progress = False
+            logger.info("UPS power restored. Cancelling scheduled shutdown.")
+            self.notifier.notify_power_recovered()
+            self.stop_shutdown_timer()
             return
 
-        logger.warning("UPS still in abnormal state (%s). Proceeding with shutdown.", status)
-        shutdown_proxmox_nodes(prox)
+        except UPSStatusNotNormalError:
+            logger.info("UPS still on battery. Proceeding with shutdown.")
 
-    except Exception as e:
-        logger.error("Error checking UPS status before shutdown: %s", e)
-        logger.warning("Proceeding with shutdown due to previous power issue.")
-        shutdown_proxmox_nodes(prox)
+        # Stop monitoring
+        self.stop_monitoring_timer()
+        self.stop_shutdown_timer()
 
-    shutdown_in_progress = False
+        # Execute shutdown
+        logger.info("Initiating shutdown of target nodes: %s", self.target_machines)
+        results = self.proxmox_client.shutdown_nodes(self.target_machines)
 
+        # Analyze results
+        successful_nodes = [node for node, success in results.items() if success]
+        failed_nodes = [node for node, success in results.items() if not success]
 
-def schedule_delayed_shutdown(prox, ups_name, nut_client, ups_status):
-    """Schedule shutdown with delay and recovery checking"""
-    global shutdown_timer, shutdown_in_progress
-
-    # Send Discord notification about power loss
-    target_hosts = ", ".join(TARGET_MACHINES)
-    if SHUTDOWN_DELAY > 0:
-        shutdown_in_progress = True
-        description = f"⚠️ **UPS Status:** {ups_status}\n🖥️ **Target Hosts:** {target_hosts}\n⏱️ **Shutdown Delay:** {SHUTDOWN_DELAY} seconds\n📊 **Monitoring for recovery...**"
-        send_discord_notification(
-            "🔴 UPS Power Loss Detected!",
-            description,
-            color=0xFF4500  # Orange-red
+        self.notifier.notify_shutdown_executed(
+            self.target_machines, successful_nodes, failed_nodes
         )
-        logger.warning("Scheduling shutdown in %d seconds. Monitoring for UPS recovery...", SHUTDOWN_DELAY)
-        shutdown_timer = threading.Timer(SHUTDOWN_DELAY, execute_shutdown, args=[prox, ups_name, nut_client])
-        shutdown_timer.start()
-    else:
-        description = f"⚠️ **UPS Status:** {ups_status}\n🖥️ **Target Hosts:** {target_hosts}\n⚡ **Action:** Immediate shutdown"
-        send_discord_notification(
-            "🔴 UPS Power Loss - Immediate Shutdown!",
-            description,
-            color=0xFF0000  # Red
-        )
-        logger.warning("No shutdown delay configured. Executing immediate shutdown.")
-        shutdown_proxmox_nodes(prox)
+
+        # Exit
+        logger.info("Shutdown process completed. Exiting proxnut.")
+        sys.exit(0)
+
+    def start_shutdown_timer(self) -> None:
+        """Schedule shutdown with delay and recovery checking"""
+
+        if self.shutdown_timer is not None:
+            logger.info("Shutdown already scheduled. Ignoring new shutdown request.")
+            return
+
+        if self.shutdown_delay > 0:
+            logger.warning(
+                "Scheduling shutdown in %d seconds. Monitoring for UPS recovery...",
+                self.shutdown_delay,
+            )
+            self.shutdown_timer = threading.Timer(
+                self.shutdown_delay, self.__execute_shutdown
+            )
+            self.shutdown_timer.start()
+        else:
+            logger.warning(
+                "No shutdown delay configured. Executing immediate shutdown."
+            )
+            self.__execute_shutdown()
+
+    def stop_shutdown_timer(self) -> None:
+        """Cancel any scheduled shutdown"""
+        if self.shutdown_timer is not None:
+            self.shutdown_timer.cancel()
+            self.shutdown_timer = None
+            logger.info("Cancelled scheduled shutdown.")
+
+    def is_shutdown_scheduled(self) -> bool:
+        """Check if a shutdown is currently scheduled"""
+        return self.shutdown_timer is not None
+
+    def start_shutdown_timer_timer(self) -> None:
+        """Check UPS status and handle power events"""
+
+        def __reschedule_next_check(interval: Optional[int] = None):
+            if interval is not None:
+                self.check_interval = interval
+
+            self.monitoring_timer = threading.Timer(
+                self.check_interval, self.start_shutdown_timer_timer
+            )
+            self.monitoring_timer.start()
+
+        try:
+            # Check Proxmox connection
+            self.proxmox_client.api.nodes.get()
+
+            # Check UPS status is normal
+            self.ups_client.check_ups_status_normal()
+
+            logger.info(
+                "UPS status normal. Next check in %d seconds.", self.check_interval
+            )
+
+            # Detect power recovery
+            if self.is_shutdown_scheduled():
+                logger.info("UPS power restored. Cancelling scheduled shutdown.")
+                self.notifier.notify_power_recovered()
+                self.stop_shutdown_timer()
+
+            # Reschedule next check
+            __reschedule_next_check(self.default_check_interval)
+
+        except UPSStatusNotNormalError as e:
+            # Detect power loss!
+            self.notifier.notify_power_loss(
+                e.status, self.target_machines, self.shutdown_delay
+            )
+            self.start_shutdown_timer()
+
+            # Reschedule next check
+            __reschedule_next_check(self.default_check_interval)
+
+        except Exception as e:
+            self.error_count += 1
+
+            # Retry checking, just logging
+            st = traceback.format_exc()
+            self.notifier.notify_error(f"Unexpected Error: {e}", st)
+
+            # backoff next check interval
+            __reschedule_next_check(self.check_interval * 2)
+
+            # Check if we've exceeded the maximum error limits
+            if self.error_count > self.max_check_error_limits:
+                self.stop_monitoring_timer()
+                self.stop_shutdown_timer()
+
+                sys.exit(1)
+
+    def stop_monitoring_timer(self) -> None:
+        """Cancel any scheduled monitoring"""
+        if self.monitoring_timer is not None:
+            self.monitoring_timer.cancel()
+            self.monitoring_timer = None
+            logger.info("Cancelled scheduled monitoring.")
+
+    def signal_handler(self, signum, _frame):
+        """Handle graceful shutdown on SIGINT and SIGTERM"""
+        logger.info("Received signal %s. Gracefully shutting down...", signum)
+
+        self.stop_monitoring_timer()
+        self.stop_shutdown_timer()
 
 
 def main():
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    """Main entry point for proxnut"""
+    # Initialize monitor
+    monitor = ProxnutMonitor()
+    logger.info("ProxnutMonitor initialized")
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, monitor.signal_handler)
+    signal.signal(signal.SIGTERM, monitor.signal_handler)
     logger.info("Signal handlers registered for SIGINT and SIGTERM.")
 
-    if SHUTDOWN_DELAY > 0:
-        logger.info("Shutdown delay configured: %d seconds", SHUTDOWN_DELAY)
-    else:
-        logger.info("No shutdown delay configured - immediate shutdown on power loss")
+    # Validate configuration
+    monitor.validate()
+    logger.info("Successfully validated configuration.")
 
-    nut_client = PyNUT.PyNUTClient(
-        host=os.getenv("NUT_HOST", "localhost"),
-        port=int(os.getenv("NUT_PORT", "3493")),
-    )
-    ups_names = nut_client.GetUPSNames()
-    logger.info("Available UPS names: %s", ups_names)
-
-    ups_name = os.getenv("NUT_UPS_NAME", "")
-    if ups_name not in ups_names:
-        raise Exception("UPS not found: {} in {}".format(ups_name, ups_names))
-
-    prox = ProxmoxAPI(
-        host=os.getenv("PROXMOX_HOST", "localhost"),
-        port=int(os.getenv("PROXMOX_PORT", "8006")),
-        verify_ssl=os.getenv("PROXMOX_VERIFY_TLS", "").lower()
-        in [
-            "true",
-            "1",
-        ],
-        user=os.getenv("PROXMOX_USER", "example@pam"),
-        token_name=os.getenv("PROXMOX_TOKEN_NAME", "proxnut"),
-        token_value=os.getenv("PROXMOX_TOKEN", "******"),
-        timeout=int(os.getenv("PROXMOX_TIMEOUT", "30")),
-    )
-    res = prox.nodes.get() or []
-    nodes = [node["node"] for node in res] if (nodes := prox.nodes.get()) else []
-    logger.info("Proxmox nodes: %s", nodes)
-
-    if not set(TARGET_MACHINES).issubset(set(nodes)):
-        raise Exception(
-            "Some target machines not found in Proxmox nodes. Targets: {}, Nodes: {}".format(
-                TARGET_MACHINES, nodes
-            )
-        )
-
-    def check_ups_status():
-        global timer, shutdown_timer, shutdown_in_progress
-
-        prox.nodes.get()  # Simple call to check connection
-
-        ups_vars = nut_client.GetUPSVars(ups_name)
-
-        ups_vars = {decode_if_bytes(k): decode_if_bytes(v) for k, v in ups_vars.items()}
-
-        status = ups_vars.get(UPS_STATUS, "")
-
-        if status not in UPS_NORMAL_STATUSES:
-            # UPS has power issue
-            if not shutdown_in_progress:
-                logger.warning(
-                    "UPS status indicates power issue (%s). Initiating shutdown process.", status
-                )
-                schedule_delayed_shutdown(prox, ups_name, nut_client, status)
-                return
-            else:
-                logger.info("UPS status still abnormal (%s). Shutdown already in progress.", status)
-        else:
-            # UPS status is normal
-            if shutdown_in_progress:
-                # Cancel pending shutdown - UPS recovered!
-                logger.info("UPS recovered to normal status (%s). Cancelling pending shutdown.", status)
-
-                # Send Discord notification about recovery
-                target_hosts = ", ".join(TARGET_MACHINES)
-                description = f"✅ **UPS Status:** {status}\n🖥️ **Target Hosts:** {target_hosts}\n🛑 **Shutdown Cancelled**"
-                send_discord_notification(
-                    "🟢 UPS Power Recovered!",
-                    description,
-                    color=0x00FF00  # Green
-                )
-
-                if shutdown_timer is not None:
-                    shutdown_timer.cancel()
-                    shutdown_timer = None
-                shutdown_in_progress = False
-            else:
-                logger.info("UPS status is normal (%s). No action required.", status)
-
-        # Schedule next check
-        if shutdown_requested:
-            logger.info("Shutdown requested. Not scheduling further checks.")
-            return
-
-        timer = threading.Timer(
-            int(os.getenv("PROXNUT_CHECK_INTERVAL", "5")), check_ups_status
-        )
-        timer.start()
-
-    check_ups_status()
+    # Start monitoring
+    monitor.start_shutdown_timer_timer()
 
 
 if __name__ == "__main__":
