@@ -151,7 +151,7 @@ class ProxnutMonitor:
     def start_shutdown_timer_timer(self) -> None:
         """Check UPS status and handle power events"""
 
-        def __reschedule_next_check(interval: Optional[int] = None):
+        def reschedule_next_check(interval: Optional[int] = None):
             if interval is not None:
                 self.check_interval = interval
 
@@ -178,7 +178,7 @@ class ProxnutMonitor:
                 self.stop_shutdown_timer()
 
             # Reschedule next check
-            __reschedule_next_check(self.default_check_interval)
+            reschedule_next_check(self.default_check_interval)
 
         except UPSStatusNotNormalError as e:
             # Detect power loss!
@@ -188,7 +188,7 @@ class ProxnutMonitor:
             self.start_shutdown_timer()
 
             # Reschedule next check
-            __reschedule_next_check(self.default_check_interval)
+            reschedule_next_check(self.default_check_interval)
 
         except Exception as e:
             self.error_count += 1
@@ -198,8 +198,9 @@ class ProxnutMonitor:
             self.notifier.notify_error(f"Unexpected Error: {e}", st)
 
             # backoff next check interval
-            __reschedule_next_check(self.check_interval * 2)
+            reschedule_next_check(self.check_interval * 2)
 
+        finally:
             # Check if we've exceeded the maximum error limits
             if self.error_count > self.max_check_error_limits:
                 self.stop_monitoring_timer()
