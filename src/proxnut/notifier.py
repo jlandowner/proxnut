@@ -92,8 +92,12 @@ class Notifier:
 
     def send(self, title: str, description: str, color: int):
         self.__logging(title, description, color)
-        if self.discord_webhook_url:
-            return self.__send_discord_notification(title, description, color)
+
+        try:
+            if self.discord_webhook_url:
+                return self.__send_discord_notification(title, description, color)
+        except Exception as e:
+            logger.error(f"Failed to send Discord notification: {e}")
 
     def notify_power_loss(
         self, ups_status: str, target_hosts: List[str], shutdown_delay: int = 0
