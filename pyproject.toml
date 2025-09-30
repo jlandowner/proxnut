@@ -28,3 +28,4 @@ path = "src/proxnut/__init__.py"
 
 [tool.poe.tasks]
 build = "docker build -t proxnut:local ."
+test = "python -m unittest discover -s tests"

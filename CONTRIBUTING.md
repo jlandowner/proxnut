@@ -45,19 +45,16 @@ docker run --env-file .env proxnut:local
 
 ### 4. Running Tests
 
-Currently, testing is manual. Please verify your changes by:
+Run the automated unit test suite with Poe:
 
 ```bash
-# 1. Run the application and verify it starts without errors
-uv run proxnut
-
-# 2. Test with different configurations
-# Edit .env with different values and test
-
-# 3. Test Docker build and run
-docker build -t proxnut:test .
-docker run --env-file .env proxnut:test
-
-# 4. Verify logging output
-# Check that logs are clear and informative
+uv run poe test
 ```
+
+Additionally, keep validating behaviour manually when you make changes:
+
+- `uv run proxnut` to exercise the monitoring loop end-to-end.
+- Adjust `.env` to cover different UPS and Proxmox configurations.
+- `docker build -t proxnut:test .` and `docker run --env-file .env proxnut:test`
+  to verify container builds.
+- Inspect log output to ensure messages remain clear and actionable.
