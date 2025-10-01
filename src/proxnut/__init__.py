@@ -8,7 +8,7 @@ This is the package initialization file (__init__.py):
 - Enables 'uv run proxnut' command
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.1-r1"
 
 from .proxnut import main
 
