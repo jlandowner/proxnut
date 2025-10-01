@@ -44,7 +44,7 @@ class ProxnutMonitor:
             if machine.strip()
         ]
         self.shutdown_delay = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
-        self.default_check_interval = int(os.getenv("CHECK_INTERVAL", "5"))
+        self.default_check_interval = int(os.getenv("PROXNUT_CHECK_INTERVAL", "5"))
         self.check_interval = self.default_check_interval
         self.max_check_error_limits = int(os.getenv("MAX_CHECK_ERROR_LIMITS", "5"))
 

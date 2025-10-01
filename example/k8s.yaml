@@ -19,7 +19,7 @@ data:
   # Target machines to shutdown (comma-separated)
   PROXNUT_SHUTDOWN_HOSTS: "machine1,machine2"
   # Monitoring Configuration (seconds)
-  CHECK_INTERVAL: "5"
+  PROXNUT_CHECK_INTERVAL: "5"
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -16,7 +16,7 @@ class ProxnutMonitorTests(unittest.TestCase):
     ENV_PATCH = {
         "PROXNUT_SHUTDOWN_HOSTS": "node1,node2",
         "PROXNUT_SHUTDOWN_DELAY": "15",
-        "CHECK_INTERVAL": "5",
+        "PROXNUT_CHECK_INTERVAL": "5",
         "MAX_CHECK_ERROR_LIMITS": "3",
     }
 

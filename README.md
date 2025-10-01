@@ -46,26 +46,6 @@ Ensure your NUT server is configured and accessible:
 upsc your-ups-name@nut-server-ip
 ```
 
-### Discord Setup (Optional)
-
-To receive notifications via Discord:
-
-1. **Create Webhook**:
-   - Go to your Discord server settings
-   - Navigate to Integrations → Webhooks
-   - Click "New Webhook"
-   - Copy the webhook URL
-
-2. **Configure Environment**:
-   ```env
-   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-url
-   ```
-
-3. **Notification Types**:
-   - 🔴 **Power Loss**: Sent when UPS status becomes abnormal
-   - 🟢 **Power Recovered**: Sent when UPS recovers during shutdown delay
-   - ⚫ **Shutdown Executed**: Included in power loss notification
-
 ## Installation
 
 ### Using UV
@@ -98,22 +78,38 @@ docker run -d --name proxnut --env-file .env ghcr.io/jlandowner/proxnut:latest
 
 ### Environment Variables
 
-| Variable                 | Description                           | Default       |
-| ------------------------ | ------------------------------------- | ------------- |
-| `PROXMOX_HOST`           | Proxmox server hostname               | `localhost`   |
-| `PROXMOX_PORT`           | Proxmox API port                      | `8006`        |
-| `PROXMOX_VERIFY_TLS`     | Verify TLS certificates               | `true`        |
-| `PROXMOX_USER`           | Proxmox user for API access           | `example@pam` |
-| `PROXMOX_TOKEN_NAME`     | API token name                        | `proxnut`     |
-| `PROXMOX_TOKEN`          | API token value                       | Required      |
-| `NUT_HOST`               | NUT server hostname                   | `127.0.0.1`   |
-| `NUT_PORT`               | NUT server port                       | `3493`        |
-| `NUT_UPS_NAME`           | UPS name in NUT                       | Required      |
-| `UPS_NORMAL_STATUSES`    | Normal UPS statuses (comma-separated) | `OL,OL CHRG`  |
-| `PROXNUT_SHUTDOWN_HOSTS` | Target hosts to shutdown              | Required      |
-| `CHECK_INTERVAL`         | Status check interval in seconds      | `5`           |
+| Variable                 | Description                           | Default         |
+| ------------------------ | ------------------------------------- | --------------- |
+| `PROXMOX_HOST`           | Proxmox server hostname               | `localhost`     |
+| `PROXMOX_PORT`           | Proxmox API port                      | `8006`          |
+| `PROXMOX_VERIFY_TLS`     | Verify TLS certificates               | `true`          |
+| `PROXMOX_USER`           | Proxmox user for API access           | `example@pam`   |
+| `PROXMOX_TOKEN_NAME`     | API token name                        | `proxnut`       |
+| `PROXMOX_TOKEN`          | API token value                       | Required        |
+| `NUT_HOST`               | NUT server hostname                   | `127.0.0.1`     |
+| `NUT_PORT`               | NUT server port                       | `3493`          |
+| `NUT_UPS_NAME`           | UPS name in NUT                       | Required        |
+| `UPS_NORMAL_STATUSES`    | Normal UPS statuses (comma-separated) | `OL,OL CHRG`    |
+| `PROXNUT_SHUTDOWN_HOSTS` | Target hosts to shutdown              | Required        |
+| `PROXNUT_CHECK_INTERVAL` | Status check interval in seconds      | `5`             |
 | `PROXNUT_SHUTDOWN_DELAY` | Shutdown delay in seconds (optional)  | `0` (immediate) |
-| `DISCORD_WEBHOOK_URL`    | Discord webhook URL for notifications | Optional      |
+| `DISCORD_WEBHOOK_URL`    | Discord webhook URL for notifications | Optional        |
+
+### Discord Setup (Optional)
+
+> ⚠️ **Important:** Discord notifications can only be sent if your network and
+> internet connection remain available during a power outage.
+
+1. **Create Webhook**:
+   - Go to your Discord server settings
+   - Navigate to Integrations → Webhooks
+   - Click "New Webhook"
+   - Copy the webhook URL
+
+2. **Configure Environment**:
+   ```env
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-url
+   ```
 
 ## License
 
