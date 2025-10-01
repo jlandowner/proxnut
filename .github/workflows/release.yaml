@@ -102,12 +102,12 @@ jobs:
           echo "✅ Committed version update and created tag: $TAG"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.validate-tag.outputs.tag }}
           name: ${{ steps.validate-tag.outputs.tag }}
           body_path: release_notes.md
-          draft: false
+          draft: true
           prerelease: ${{ contains(steps.validate-tag.outputs.tag, '-') }}
 
   build-and-push:
