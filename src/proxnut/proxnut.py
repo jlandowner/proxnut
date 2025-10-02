@@ -148,7 +148,7 @@ class ProxnutMonitor:
         """Check if a shutdown is currently scheduled"""
         return self.shutdown_timer is not None
 
-    def start_shutdown_timer_timer(self) -> None:
+    def start_monitoring_timer(self) -> None:
         """Check UPS status and handle power events"""
 
         def reschedule_next_check(interval: Optional[int] = None):
@@ -156,7 +156,7 @@ class ProxnutMonitor:
                 self.check_interval = interval
 
             self.monitoring_timer = threading.Timer(
-                self.check_interval, self.start_shutdown_timer_timer
+                self.check_interval, self.start_monitoring_timer
             )
             self.monitoring_timer.start()
 
@@ -239,7 +239,7 @@ def main():
     logger.info("Successfully validated configuration.")
 
     # Start monitoring
-    monitor.start_shutdown_timer_timer()
+    monitor.start_monitoring_timer()
 
 
 if __name__ == "__main__":
