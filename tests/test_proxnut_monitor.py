@@ -235,7 +235,7 @@ class ProxnutMonitorTests(unittest.TestCase):
         self.assertEqual(monitor.check_interval, monitor.default_check_interval * 2)
 
     def test_defaults_to_all_nodes_when_shutdown_hosts_not_set(self):
-        """When PROXNUT_SHUTDOWN_HOSTS is not set, it should default to all nodes in the cluster."""
+        """When PROXNUT_SHUTDOWN_HOSTS is not set, nodes should be fetched at shutdown time."""
         # Configure the Proxmox mock to return a set of nodes.
         proxmox_client = MockProxmoxClient(
             nodes_get_return=[
@@ -244,20 +244,37 @@ class ProxnutMonitorTests(unittest.TestCase):
                 {"node": "pve3"},
             ]
         )
-        ups_client = MockUPSClient()
+        ups_client = MockUPSClient(
+            variables={"ups.status": "OB"},
+            raise_status_error=True,
+        )
+        notifier = MockNotifier()
         
         # Build monitor without setting PROXNUT_SHUTDOWN_HOSTS
         with patch.dict(os.environ, {"PROXNUT_SHUTDOWN_HOSTS": ""}, clear=False):
             monitor = ProxnutMonitor()
             monitor.proxmox_client = proxmox_client  # type: ignore[assignment]
             monitor.ups_client = ups_client  # type: ignore[assignment]
+            monitor.notifier = notifier  # type: ignore[assignment]
             
             # Initially, target_machines should be empty
             self.assertEqual(monitor.target_machines, [])
+            # shutdown_all_nodes flag should be True
+            self.assertTrue(monitor.shutdown_all_nodes)
             
-            # After validation, it should have all nodes
+            # After validation, target_machines should still be empty
             monitor.validate()
-            self.assertEqual(sorted(monitor.target_machines), ["pve1", "pve2", "pve3"])
+            self.assertEqual(monitor.target_machines, [])
+            
+            # But at shutdown time, all nodes should be fetched and shut down
+            monitor.shutdown_delay = 0
+            
+            with patch("proxnut.proxnut.sys.exit") as exit_patch:
+                monitor.start_shutdown_timer_timer()
+            
+            # Verify that all nodes were shut down
+            self.assertEqual(proxmox_client.shutdown_calls, [["pve1", "pve2", "pve3"]])
+            exit_patch.assert_called_once_with(0)
 
     def test_uses_specified_hosts_when_set(self):
         """When PROXNUT_SHUTDOWN_HOSTS is set, it should use the specified hosts."""
@@ -279,10 +296,54 @@ class ProxnutMonitorTests(unittest.TestCase):
             
             # Should have the specified hosts
             self.assertEqual(monitor.target_machines, ["pve1", "pve2"])
+            # shutdown_all_nodes flag should be False
+            self.assertFalse(monitor.shutdown_all_nodes)
             
             # After validation, it should still have the specified hosts
             monitor.validate()
             self.assertEqual(monitor.target_machines, ["pve1", "pve2"])
+
+    def test_newly_added_nodes_are_included_in_shutdown(self):
+        """When PROXNUT_SHUTDOWN_HOSTS is not set, newly added nodes should be included in shutdown."""
+        # Start with 2 nodes
+        proxmox_client = MockProxmoxClient(
+            nodes_get_return=[
+                {"node": "pve1"},
+                {"node": "pve2"},
+            ]
+        )
+        ups_client = MockUPSClient(
+            variables={"ups.status": "OB"},
+            raise_status_error=True,
+        )
+        notifier = MockNotifier()
+        
+        # Build monitor without setting PROXNUT_SHUTDOWN_HOSTS
+        with patch.dict(os.environ, {"PROXNUT_SHUTDOWN_HOSTS": ""}, clear=False):
+            monitor = ProxnutMonitor()
+            monitor.proxmox_client = proxmox_client  # type: ignore[assignment]
+            monitor.ups_client = ups_client  # type: ignore[assignment]
+            monitor.notifier = notifier  # type: ignore[assignment]
+            
+            # Validate with initial nodes
+            monitor.validate()
+            
+            # Simulate adding a new node to the cluster
+            proxmox_client.nodes_get_return = [
+                {"node": "pve1"},
+                {"node": "pve2"},
+                {"node": "pve3"},  # New node added
+            ]
+            
+            # Trigger shutdown
+            monitor.shutdown_delay = 0
+            
+            with patch("proxnut.proxnut.sys.exit") as exit_patch:
+                monitor.start_shutdown_timer_timer()
+            
+            # Verify that all 3 nodes (including the newly added one) were shut down
+            self.assertEqual(proxmox_client.shutdown_calls, [["pve1", "pve2", "pve3"]])
+            exit_patch.assert_called_once_with(0)
 
 
 if __name__ == "__main__":

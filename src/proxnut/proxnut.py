@@ -43,6 +43,9 @@ class ProxnutMonitor:
             for machine in os.getenv("PROXNUT_SHUTDOWN_HOSTS", "").split(",")
             if machine.strip()
         ]
+        # Track whether to shutdown all nodes (when PROXNUT_SHUTDOWN_HOSTS not set)
+        self.shutdown_all_nodes = not self.target_machines
+        
         self.shutdown_delay = int(os.getenv("PROXNUT_SHUTDOWN_DELAY", "0"))
         self.default_check_interval = int(os.getenv("PROXNUT_CHECK_INTERVAL", "5"))
         self.check_interval = self.default_check_interval
@@ -71,18 +74,19 @@ class ProxnutMonitor:
 
         # Validate Proxmox configuration
         logger.info("Validating Proxmox configuration...")
-        if not self.target_machines:
-            # If no target machines configured, default to all nodes in cluster
-            logger.info("No target machines configured. Defaulting to all nodes in cluster.")
-            self.target_machines = self.proxmox_client.get_nodes()
-            if not self.target_machines:
-                raise ValidateError("No nodes found in Proxmox cluster")
-
-        if not self.proxmox_client.validate_target_nodes(self.target_machines):
+        if self.shutdown_all_nodes:
+            # If no target machines configured, validate that cluster has at least one node
+            logger.info("No target machines configured. Will shutdown all nodes in cluster at shutdown time.")
             available_nodes = self.proxmox_client.get_nodes()
-            raise ValidateError(
-                "Target nodes not found in Proxmox cluster", available_nodes
-            )
+            if not available_nodes:
+                raise ValidateError("No nodes found in Proxmox cluster")
+        else:
+            # Validate that specified target nodes exist in cluster
+            if not self.proxmox_client.validate_target_nodes(self.target_machines):
+                available_nodes = self.proxmox_client.get_nodes()
+                raise ValidateError(
+                    "Target nodes not found in Proxmox cluster", available_nodes
+                )
 
     def __execute_shutdown(self) -> None:
         """Execute the actual shutdown after delay"""
@@ -103,16 +107,24 @@ class ProxnutMonitor:
         self.stop_monitoring_timer()
         self.stop_shutdown_timer()
 
+        # Determine target nodes for shutdown
+        if self.shutdown_all_nodes:
+            # Fetch all nodes at shutdown time to include any newly added nodes
+            target_nodes = self.proxmox_client.get_nodes()
+            logger.info("Shutting down all nodes in cluster: %s", target_nodes)
+        else:
+            target_nodes = self.target_machines
+            logger.info("Initiating shutdown of target nodes: %s", target_nodes)
+
         # Execute shutdown
-        logger.info("Initiating shutdown of target nodes: %s", self.target_machines)
-        results = self.proxmox_client.shutdown_nodes(self.target_machines)
+        results = self.proxmox_client.shutdown_nodes(target_nodes)
 
         # Analyze results
         successful_nodes = [node for node, success in results.items() if success]
         failed_nodes = [node for node, success in results.items() if not success]
 
         self.notifier.notify_shutdown_executed(
-            self.target_machines, successful_nodes, failed_nodes
+            target_nodes, successful_nodes, failed_nodes
         )
 
         # Exit
@@ -186,8 +198,14 @@ class ProxnutMonitor:
 
         except UPSStatusNotNormalError as e:
             # Detect power loss!
+            # Determine which nodes will be shut down for notification
+            if self.shutdown_all_nodes:
+                notification_nodes = self.proxmox_client.get_nodes()
+            else:
+                notification_nodes = self.target_machines
+            
             self.notifier.notify_power_loss(
-                e.status, self.target_machines, self.shutdown_delay
+                e.status, notification_nodes, self.shutdown_delay
             )
             self.start_shutdown_timer()
 
