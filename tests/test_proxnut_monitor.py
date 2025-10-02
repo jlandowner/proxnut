@@ -234,6 +234,56 @@ class ProxnutMonitorTests(unittest.TestCase):
         self.assertEqual(next_timer.interval, monitor.default_check_interval * 2)
         self.assertEqual(monitor.check_interval, monitor.default_check_interval * 2)
 
+    def test_defaults_to_all_nodes_when_shutdown_hosts_not_set(self):
+        """When PROXNUT_SHUTDOWN_HOSTS is not set, it should default to all nodes in the cluster."""
+        # Configure the Proxmox mock to return a set of nodes.
+        proxmox_client = MockProxmoxClient(
+            nodes_get_return=[
+                {"node": "pve1"},
+                {"node": "pve2"},
+                {"node": "pve3"},
+            ]
+        )
+        ups_client = MockUPSClient()
+        
+        # Build monitor without setting PROXNUT_SHUTDOWN_HOSTS
+        with patch.dict(os.environ, {"PROXNUT_SHUTDOWN_HOSTS": ""}, clear=False):
+            monitor = ProxnutMonitor()
+            monitor.proxmox_client = proxmox_client  # type: ignore[assignment]
+            monitor.ups_client = ups_client  # type: ignore[assignment]
+            
+            # Initially, target_machines should be empty
+            self.assertEqual(monitor.target_machines, [])
+            
+            # After validation, it should have all nodes
+            monitor.validate()
+            self.assertEqual(sorted(monitor.target_machines), ["pve1", "pve2", "pve3"])
+
+    def test_uses_specified_hosts_when_set(self):
+        """When PROXNUT_SHUTDOWN_HOSTS is set, it should use the specified hosts."""
+        # Configure the Proxmox mock to return a set of nodes.
+        proxmox_client = MockProxmoxClient(
+            nodes_get_return=[
+                {"node": "pve1"},
+                {"node": "pve2"},
+                {"node": "pve3"},
+            ]
+        )
+        ups_client = MockUPSClient()
+        
+        # Build monitor with specific hosts
+        with patch.dict(os.environ, {"PROXNUT_SHUTDOWN_HOSTS": "pve1,pve2"}, clear=False):
+            monitor = ProxnutMonitor()
+            monitor.proxmox_client = proxmox_client  # type: ignore[assignment]
+            monitor.ups_client = ups_client  # type: ignore[assignment]
+            
+            # Should have the specified hosts
+            self.assertEqual(monitor.target_machines, ["pve1", "pve2"])
+            
+            # After validation, it should still have the specified hosts
+            monitor.validate()
+            self.assertEqual(monitor.target_machines, ["pve1", "pve2"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,7 +72,11 @@ class ProxnutMonitor:
         # Validate Proxmox configuration
         logger.info("Validating Proxmox configuration...")
         if not self.target_machines:
-            raise ValidateError("No target machines configured")
+            # If no target machines configured, default to all nodes in cluster
+            logger.info("No target machines configured. Defaulting to all nodes in cluster.")
+            self.target_machines = self.proxmox_client.get_nodes()
+            if not self.target_machines:
+                raise ValidateError("No nodes found in Proxmox cluster")
 
         if not self.proxmox_client.validate_target_nodes(self.target_machines):
             available_nodes = self.proxmox_client.get_nodes()
