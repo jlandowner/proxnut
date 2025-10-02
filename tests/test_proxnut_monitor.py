@@ -64,7 +64,7 @@ class ProxnutMonitorTests(unittest.TestCase):
         notifier = cast(MockNotifier, monitor.notifier)  # type: ignore[arg-type]
 
         # Run a single monitoring cycle to simulate a healthy check.
-        monitor.start_shutdown_timer_timer()
+        monitor.start_monitoring_timer()
 
         # Confirm timers and notifications reflect the healthy state with no errors recorded.
         self.assertEqual(len(MockTimer.instances), 1)
@@ -94,7 +94,7 @@ class ProxnutMonitorTests(unittest.TestCase):
 
         # Patch sys.exit to capture exit behaviour while triggering the monitoring loop once.
         with patch("proxnut.proxnut.sys.exit") as exit_patch:
-            monitor.start_shutdown_timer_timer()
+            monitor.start_monitoring_timer()
 
         # Check notifications, shutdown results, and ensure the process would have exited successfully.
         self.assertEqual(len(notifier.power_loss_calls), 1)
@@ -127,7 +127,7 @@ class ProxnutMonitorTests(unittest.TestCase):
 
         # Patch sys.exit, trigger the initial monitoring cycle, and capture the scheduled shutdown timer.
         with patch("proxnut.proxnut.sys.exit") as exit_patch:
-            monitor.start_shutdown_timer_timer()
+            monitor.start_monitoring_timer()
             shutdown_callback = getattr(monitor, "_ProxnutMonitor__execute_shutdown")
             shutdown_timer = next(
                 timer
@@ -166,7 +166,7 @@ class ProxnutMonitorTests(unittest.TestCase):
 
         # Trigger the monitoring cycle once, then adjust the UPS mock to report recovery before the next cycle.
         with patch("proxnut.proxnut.sys.exit") as exit_patch:
-            monitor.start_shutdown_timer_timer()
+            monitor.start_monitoring_timer()
             shutdown_callback = getattr(monitor, "_ProxnutMonitor__execute_shutdown")
             shutdown_timer = next(
                 timer
@@ -178,7 +178,7 @@ class ProxnutMonitorTests(unittest.TestCase):
             ups_client.raise_status_error = False
             ups_client.variables["ups.status"] = "OL"
 
-            monitor.start_shutdown_timer_timer()
+            monitor.start_monitoring_timer()
 
         # Verify the shutdown was cancelled, recovery was notified, and no exit was attempted.
         exit_patch.assert_not_called()
@@ -195,7 +195,7 @@ class ProxnutMonitorTests(unittest.TestCase):
         monitor = self._build_monitor(proxmox_client=proxmox_client, notifier=notifier)
 
         # Run the monitoring loop once to capture the first error and ensure backoff is applied.
-        monitor.start_shutdown_timer_timer()
+        monitor.start_monitoring_timer()
         self.assertEqual(monitor.error_count, 1)
         self.assertEqual(len(notifier.error_calls), 1)
         self.assertEqual(
@@ -206,7 +206,7 @@ class ProxnutMonitorTests(unittest.TestCase):
         # Continue the loop until the error threshold is exceeded and confirm the process would exit.
         with patch("proxnut.proxnut.sys.exit") as exit_patch:
             for _ in range(monitor.max_check_error_limits):
-                monitor.start_shutdown_timer_timer()
+                monitor.start_monitoring_timer()
 
         exit_patch.assert_called_once_with(1)
         self.assertGreater(monitor.error_count, monitor.max_check_error_limits)
@@ -221,7 +221,7 @@ class ProxnutMonitorTests(unittest.TestCase):
         monitor = self._build_monitor(proxmox_client=proxmox_client, notifier=notifier)
 
         # Execute the monitoring loop once to trigger the API failure and subsequent error handling.
-        monitor.start_shutdown_timer_timer()
+        monitor.start_monitoring_timer()
 
         # Ensure the error was reported with context and a backoff retry was scheduled.
         self.assertEqual(monitor.error_count, 1)
