@@ -74,13 +74,7 @@ class ProxnutMonitor:
 
         # Validate Proxmox configuration
         logger.info("Validating Proxmox configuration...")
-        if self.shutdown_all_nodes:
-            # If no target machines configured, validate that cluster has at least one node
-            logger.info("No target machines configured. Will shutdown all nodes in cluster at shutdown time.")
-            available_nodes = self.proxmox_client.get_nodes()
-            if not available_nodes:
-                raise ValidateError("No nodes found in Proxmox cluster")
-        else:
+        if not self.shutdown_all_nodes:
             # Validate that specified target nodes exist in cluster
             if not self.proxmox_client.validate_target_nodes(self.target_machines):
                 available_nodes = self.proxmox_client.get_nodes()
