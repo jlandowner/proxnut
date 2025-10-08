@@ -99,16 +99,11 @@ class Notifier:
         except Exception as e:
             logger.error(f"Failed to send Discord notification: {e}")
 
-    def notify_power_loss(
-        self, ups_status: str, target_hosts: List[str], shutdown_delay: int = 0
-    ):
+    def notify_power_loss(self, ups_status: str, shutdown_delay: int = 0):
         """Send notification about UPS power loss"""
-        target_hosts_str = ", ".join(target_hosts)
-
         title = "🔴 UPS Power Loss Detected!"
         description = (
             f"⚠️ **UPS Status:** {ups_status}\n"
-            f"🖥️ **Target Hosts:** {target_hosts_str}\n"
             f"⏱️ **Shutdown Delay:** {shutdown_delay} seconds"
         )
         color = COLOR_MAP["orange-red"]

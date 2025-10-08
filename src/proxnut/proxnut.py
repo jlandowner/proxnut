@@ -192,15 +192,7 @@ class ProxnutMonitor:
 
         except UPSStatusNotNormalError as e:
             # Detect power loss!
-            # Determine which nodes will be shut down for notification
-            if self.shutdown_all_nodes:
-                notification_nodes = self.proxmox_client.get_nodes()
-            else:
-                notification_nodes = self.target_machines
-            
-            self.notifier.notify_power_loss(
-                e.status, notification_nodes, self.shutdown_delay
-            )
+            self.notifier.notify_power_loss(e.status, self.shutdown_delay)
             self.start_shutdown_timer()
 
             # Reschedule next check
