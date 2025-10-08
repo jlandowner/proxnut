@@ -270,7 +270,7 @@ class ProxnutMonitorTests(unittest.TestCase):
             monitor.shutdown_delay = 0
             
             with patch("proxnut.proxnut.sys.exit") as exit_patch:
-                monitor.start_shutdown_timer_timer()
+                monitor.start_monitoring_timer()
             
             # Verify that all nodes were shut down
             self.assertEqual(proxmox_client.shutdown_calls, [["pve1", "pve2", "pve3"]])
@@ -339,7 +339,7 @@ class ProxnutMonitorTests(unittest.TestCase):
             monitor.shutdown_delay = 0
             
             with patch("proxnut.proxnut.sys.exit") as exit_patch:
-                monitor.start_shutdown_timer_timer()
+                monitor.start_monitoring_timer()
             
             # Verify that all 3 nodes (including the newly added one) were shut down
             self.assertEqual(proxmox_client.shutdown_calls, [["pve1", "pve2", "pve3"]])
