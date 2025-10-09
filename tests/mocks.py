@@ -124,13 +124,10 @@ class MockNotifier:
         self.shutdown_executed_calls: List[Dict[str, Any]] = []
         self.error_calls: List[Dict[str, Any]] = []
 
-    def notify_power_loss(
-        self, ups_status: str, target_hosts: List[str], shutdown_delay: int = 0
-    ):
+    def notify_power_loss(self, ups_status: str, shutdown_delay: int = 0):
         self.power_loss_calls.append(
             {
                 "ups_status": ups_status,
-                "target_hosts": list(target_hosts),
                 "shutdown_delay": shutdown_delay,
             }
         )
